@@ -54,15 +54,13 @@ transmission or receipt of any content via Rhizome.
 Documentation
 -------------
 
-* [CURRENT-RELEASE.md](./CURRENT-RELEASE.md) (alternative link
-  [CURRENT-RELEASE.md](./blob/release/CURRENT-RELEASE.md)) Release notes for
+* [CURRENT-RELEASE.md](./batphone/blob/development/CURRENT-RELEASE.md) Release notes for
   the current release.
 
-* [INSTALL.md](./INSTALL.md) (alternative link
-  [INSTALL.md](./blob/release/INSTALL.md)) Instructions for building the
-  Android APK from the source code and installing manually.
+* [INSTALL.md](./batphone/blob/development/INSTALL.md) Instructions for building the
+  Android APK from the source code provided in this repository and installing the apk manually.
 
-* [doc](./doc/) (alternative link [doc](./tree/release/doc/)) Technical
+* [doc](./batphone/blob/development/doc/) Technical
   documentation, including past release notes.
 
 * [Serval Wiki][] contains helpful information for developers and users,
