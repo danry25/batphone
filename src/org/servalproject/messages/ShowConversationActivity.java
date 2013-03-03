@@ -233,7 +233,6 @@ public class ShowConversationActivity extends ListActivity {
 		this.getListView().setTranscriptMode(
 				ListView.TRANSCRIPT_MODE_ALWAYS_SCROLL);
 
-		refreshMessageList();
 	}
 
 	protected void retrieveRecipient(final ContentResolver resolver,
@@ -266,7 +265,7 @@ public class ShowConversationActivity extends ListActivity {
 		try {
 			Identity main = Identity.getMainIdentity();
 			SimpleMeshMS meshMs = new SimpleMeshMS(
-					main.sid,
+					main.subscriberId,
 					recipient.sid,
 					main.getDid(),
 					recipient.did,
