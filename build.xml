@@ -73,26 +73,13 @@
     <property name="version.code" value="12345"/>
 
     <!--  which servald binary would you like to include?
-    For debugging you might wish to add this to your local.properties file;
+    For debugging with gdb you might wish to add this to your local.properties file;
     servald.binary=${basedir}/obj/local/armeabi/servaldsimple
      -->
     <property name="servald.binary" value="${basedir}/libs/armeabi/servald"/>
     
 <!-- extension targets. Uncomment the ones where you want to do custom work
      in between standard targets -->
-
-	<!--  deprecated, may be reinstated at some point in the future -->
-    <!-- target name="chipset">
-        <delete file="${basedir}/data/conf/chipset.zip"/>
-        <zip basedir="${basedir}/data/conf/wifichipsets" destfile="${basedir}/data/conf/chipset.zip" level="9"/>
-    </target>
-    <target name="upload-chipset" depends="chipset">
-        <exec executable="scp" dir="${basedir}">
-            <arg value="${basedir}/data/conf/chipset.zip"/>
-            <arg value="${webserver}/chipset.zip"/>
-        </exec>
-    </target -->
-
 
     <target name="version">
                 <echo>Version Name: ${version.name}</echo>
@@ -114,10 +101,61 @@
 	</exec>
     </target>
 
+    <target name="create-manifest" depends="version">
+        <!-- Make sure parameters are blank if not supplied -->
+        <property name="manifest.file" value="${out.final.file}.manifest"/>
+        <property name="manifest.secret" value=""/>
+        <property name="manifest.author" value=""/>
+        <property name="manifest.pin" value=""/>
+        <property name="manifest.version" value=""/>
+        <property name="manifest.id" value=""/>
+
+        <condition property="-manifest.id" value="id=${manifest.id}">
+            <length string="${manifest.id}" when="greater" length="0" />
+        </condition>
+        <property name="-manifest.id" value=""/>
+        <condition property="-manifest.version" value="version=${manifest.version}">
+            <length string="${manifest.version}" when="greater" length="0" />
+        </condition>
+        <property name="-manifest.version" value=""/>
+
+        <!-- Construct manifest -->
+<echo file="${out.final.file}.manifest" append="false">name=Serval-${version.name}.apk
+service=file
+${-manifest.id}
+${-manifest.version}
+</echo>
+
+        <!-- Add the apk to our local rhizome store -->
+        <exec executable="${basedir}/jni/serval-dna/servald" failonerror="true">
+            <arg value="rhizome"/>
+            <arg value="add"/>
+            <arg value="file"/>
+            <arg value="${manifest.author}"/>
+            <arg value="${out.final.file}"/>
+            <arg value="${out.final.file}.manifest"/>
+            <arg value="${manifest.secret}"/>
+        </exec>
+
+        <!-- Append the payload and manifest into a single file -->
+        <exec executable="${basedir}/jni/serval-dna/servald" failonerror="true">
+            <arg value="rhizome"/>
+            <arg value="append"/>
+            <arg value="manifest"/>
+            <arg value="${out.final.file}"/>
+            <arg value="${out.final.file}.manifest"/>
+        </exec>
+
+    </target>
+
+    <target name="debug-signed" depends="debug,create-manifest"/>
+    <target name="release-signed" depends="release,create-manifest"/>
+
     <target name="upload-release" depends="version">
+        <property name="build-folder" value="unstable/"/>
         <exec executable="scp" dir="${basedir}">
             <arg value="${basedir}/bin/batphone-release.apk"/>
-            <arg value="${webserver}/files/Serval-${version.name}.apk"/>
+            <arg value="${webserver}/files/${build-folder}Serval_Mesh-${version.name}.apk"/>
         </exec>
     </target>
 

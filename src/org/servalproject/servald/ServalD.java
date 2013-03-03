@@ -21,20 +21,17 @@
 package org.servalproject.servald;
 
 import java.io.File;
-import java.util.AbstractList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 
 import org.servalproject.ServalBatPhoneApplication;
 import org.servalproject.rhizome.RhizomeManifest;
 import org.servalproject.rhizome.RhizomeManifestParseException;
 
+import android.database.Cursor;
 import android.net.Uri;
-import android.os.Bundle;
 import android.util.Log;
 
 /**
@@ -63,7 +60,7 @@ public class ServalD
 	 * @param args	The words to pass on the command line (ie, argv[1]...argv[n])
 	 * @return		The servald exit status code (normally 0 indicates success)
 	 */
-	private static native int rawCommand(List<byte[]> outv, String[] args)
+	private static native int rawCommand(IJniResults outv, String[] args)
 			throws ServalDInterfaceError;
 
 	/**
@@ -77,31 +74,12 @@ public class ServalD
 	 *            servald.command("config", "set", "debug", "peers");
 	 * @return The servald exit status code (normally0 indicates success)
 	 */
-
-	public static synchronized int command(final ResultCallback callback, String... args)
+	private static synchronized int command(final IJniResults callback, String... args)
 			throws ServalDInterfaceError
 	{
 		if (log)
 			Log.i(ServalD.TAG, "args = " + Arrays.deepToString(args));
-		return rawCommand(new AbstractList<byte[]>() {
-			@Override
-			public boolean add(byte[] object) {
-				String str = new String(object);
-				if (log)
-					Log.i(TAG, "Result = " + str);
-				return callback.result(str);
-			}
-			@Override
-			public byte[] get(int location) {
-				// TODO Auto-generated method stub
-				return null;
-			}
-			@Override
-			public int size() {
-				// TODO Auto-generated method stub
-				return 0;
-			}
-		}, args);
+		return rawCommand(callback, args);
 	}
 
 	/**
@@ -115,17 +93,17 @@ public class ServalD
 	 *         have sent to standard output if invoked via a shell command line.
 	 */
 
-	public static synchronized ServalDResult command(String... args)
+	private static synchronized ServalDResult command(String... args)
 			throws ServalDInterfaceError
 	{
 		if (log)
 			Log.i(ServalD.TAG, "args = " + Arrays.deepToString(args));
 		LinkedList<byte[]> outv = new LinkedList<byte[]>();
-		int status = rawCommand(outv, args);
+		int status = rawCommand(new JniResultsList(outv), args);
 		if (log) {
 			LinkedList<String> outvstr = new LinkedList<String>();
 			for (byte[] a: outv)
-				outvstr.add(new String(a));
+				outvstr.add(a == null ? null : new String(a));
 			Log.i(ServalD.TAG, "result = " + Arrays.deepToString(outvstr.toArray()));
 			Log.i(ServalD.TAG, "status = " + status);
 		}
@@ -178,6 +156,139 @@ public class ServalD
 		return System.currentTimeMillis() - started;
 	}
 
+	/** The result of a lookup operation.
+	 *
+	 * @author Andrew Bettison <andrew@servalproject.com>
+	 */
+	protected static class LookupResult extends ServalDResult {
+		public final SubscriberId subscriberId;
+		public final String did;
+		public final String name;
+		/** Copy constructor. */
+		protected LookupResult(LookupResult orig) {
+			super(orig);
+			this.subscriberId = orig.subscriberId;
+			this.did = orig.did;
+			this.name = orig.name;
+		}
+		/** Unpack a result from a keyring add operation.
+		*
+		* @param result		The result object returned by the operation.
+		*
+		* @author Andrew Bettison <andrew@servalproject.com>
+		*/
+		protected LookupResult(ServalDResult result) throws ServalDInterfaceError {
+			super(result);
+			if (result.status == 0) {
+				this.subscriberId = getFieldSubscriberId("sid");
+				this.did = getFieldStringNonEmptyOrNull("did");
+				this.name = getFieldStringNonEmptyOrNull("name");
+			} else {
+				this.subscriberId = null;
+				this.did = null;
+				this.name = null;
+			}
+		}
+	}
+
+	/** The result of a keyring add operation.
+	 *
+	 * @author Andrew Bettison <andrew@servalproject.com>
+	 */
+	protected static class KeyringAddResult extends LookupResult {
+		/** Copy constructor. */
+		protected KeyringAddResult(KeyringAddResult orig) {
+			super(orig);
+		}
+		/** Unpack a result from a keyring add operation.
+		*
+		* @param result		The result object returned by the operation.
+		*
+		* @author Andrew Bettison <andrew@servalproject.com>
+		*/
+		protected KeyringAddResult(ServalDResult result) throws ServalDInterfaceError {
+			super(result);
+		}
+	}
+
+	public static KeyringAddResult keyringAdd() throws ServalDFailureException, ServalDInterfaceError
+	{
+		ServalDResult result = command("keyring", "add");
+		result.failIfStatusError();
+		return new KeyringAddResult(result);
+	}
+
+	public static KeyringAddResult keyringSetDidName(SubscriberId sid, String did, String name) throws ServalDFailureException, ServalDInterfaceError
+	{
+		List<String> args = new LinkedList<String>();
+		args.add("keyring");
+		args.add("set");
+		args.add("did");
+		args.add(sid.toHex().toUpperCase());
+		if (did != null)
+			args.add(did);
+		else if (name != null)
+			args.add("");
+		if (name != null)
+			args.add(name);
+		ServalDResult result = command(args.toArray(new String[args.size()]));
+		result.failIfStatusError();
+		return new KeyringAddResult(result);
+	}
+
+	/** The result of a keyring list.
+	 *
+	 * @author Andrew Bettison <andrew@servalproject.com>
+	 */
+	protected static class KeyringListResult extends ServalDResult {
+		static class Entry {
+			public final SubscriberId subscriberId;
+			public final String did;
+			public final String name;
+			protected Entry(SubscriberId sid, String did, String name) {
+				this.subscriberId = sid;
+				this.did = did;
+				this.name = name;
+			}
+		}
+		public final Entry[] entries;
+		/** Copy constructor. */
+		protected KeyringListResult(KeyringListResult orig) {
+			super(orig);
+			this.entries = orig.entries;
+		}
+		/** Unpack a result from a keyring list output.
+		*
+		* @param result		The result object returned by the operation.
+		*
+		* @author Andrew Bettison <andrew@servalproject.com>
+		*/
+		protected KeyringListResult(ServalDResult result) throws ServalDInterfaceError {
+			super(result);
+			if (this.outv.length % 3 != 0)
+				throw new ServalDInterfaceError("invalid number of fields " + this.outv.length + " (not multiple of 3)", this);
+			Entry[] entries = new Entry[this.outv.length / 3];
+			for (int i = 0; i != this.outv.length; i += 3)
+				try {
+					entries[i / 3] = new Entry(
+							new SubscriberId(new String(this.outv[i])),
+							this.outv[i + 1].length != 0 ? new String(this.outv[i + 1]) : null,
+							this.outv[i + 2].length != 0 ? new String(this.outv[i + 2]) : null
+						);
+				} catch (SubscriberId.InvalidHexException e) {
+					throw new ServalDInterfaceError("invalid output field outv[" + i + "]", this, e);
+				}
+			this.entries = entries;
+		}
+	}
+
+	public static KeyringListResult keyringList() throws ServalDFailureException, ServalDInterfaceError
+	{
+		ServalDResult result = command("keyring", "list");
+		result.failIfStatusError();
+		return new KeyringListResult(result);
+	}
+
 	public static void dnaLookup(final LookupResults results, String did)
 			throws ServalDFailureException, ServalDInterfaceError {
 		dnaLookup(results, did, 3000);
@@ -188,12 +299,12 @@ public class ServalD
 			ServalDInterfaceError {
 		if (log)
 			Log.i(ServalD.TAG, "args = [dna, lookup, " + did + "]");
-		int ret = rawCommand(new AbstractList<byte[]>() {
+		int ret = rawCommand(new AbstractJniResults() {
 			DnaResult nextResult;
 			int resultNumber = 0;
 			@Override
-			public boolean add(byte[] value) {
-				String str = new String(value);
+			public void putBlob(byte[] value) {
+				String str = value == null ? "" : new String(value);
 				if (log)
 					Log.i(ServalD.TAG, "result = " + str);
 				switch ((resultNumber++) % 3) {
@@ -216,19 +327,6 @@ public class ServalD
 					}
 					nextResult = null;
 				}
-				return true;
-			}
-
-			@Override
-			public byte[] get(int location) {
-				// TODO Auto-generated method stub
-				return null;
-			}
-
-			@Override
-			public int size() {
-				// TODO Auto-generated method stub
-				return 0;
 			}
 		}, new String[] {
 				"dna", "lookup", did, Integer.toString(timeout)
@@ -236,57 +334,6 @@ public class ServalD
 
 		if (ret == ServalDResult.STATUS_ERROR)
 			throw new ServalDFailureException("error exit status");
-	}
-
-	/** The result of a "rhizome list" operation.
-	 *
-	 * @author Andrew Bettison <andrew@servalproject.com>
-	 */
-	public static class RhizomeListResult extends ServalDResult {
-		public final Map<String,Integer> columns;
-		public final String[][] list;
-
-		public RhizomeManifest toManifest(int i)
-				throws RhizomeManifestParseException
-		{
-			Bundle b = new Bundle();
-			for (Entry<String, Integer> entry : columns.entrySet()) {
-				b.putString(entry.getKey(), list[i][entry.getValue()]);
-			}
-			return RhizomeManifest.fromBundle(b, null);
-		}
-
-		private RhizomeListResult(ServalDResult result) throws ServalDInterfaceError {
-			super(result);
-			try {
-				int i = 0;
-				final int ncol = Integer.decode(new String(this.outv[i++]));
-				if (ncol <= 0)
-					throw new ServalDInterfaceError("no columns, ncol=" + ncol, this);
-				final int nrows = (this.outv.length - 1) / ncol;
-				if (nrows < 1)
-					throw new ServalDInterfaceError("missing rows, nrows=" + nrows, this);
-				final int properlength = nrows * ncol + 1;
-				if (this.outv.length != properlength)
-					throw new ServalDInterfaceError("incomplete row, outv.length should be " + properlength, this);
-				int row, col;
-				this.columns = new HashMap<String,Integer>(ncol);
-				for (col = 0; col != ncol; ++col)
-					this.columns.put(new String(this.outv[i++]), col);
-				this.list = new String[nrows - 1][ncol];
-				for (row = 0; row != this.list.length; ++row)
-					for (col = 0; col != ncol; ++col)
-						this.list[row][col] = new String(this.outv[i++]);
-				if (i != this.outv.length)
-					throw new ServalDInterfaceError("logic error, i=" + i + ", outv.length=" + this.outv.length, this);
-			}
-			catch (IndexOutOfBoundsException e) {
-				throw new ServalDInterfaceError(result, e);
-			}
-			catch (IllegalArgumentException e) {
-				throw new ServalDInterfaceError(result, e);
-			}
-		}
 	}
 
 	/** The result of any rhizome operation that involves a payload.
@@ -340,164 +387,101 @@ public class ServalD
 	public static RhizomeAddFileResult rhizomeAddFile(File payloadPath, File manifestPath, SubscriberId author, String pin)
 		throws ServalDFailureException, ServalDInterfaceError
 	{
-		ServalDResult result = command("rhizome", "add", "file",
-				author == null ? "" : author.toHex().toUpperCase(),
-										pin != null ? pin : "",
-										payloadPath != null ? payloadPath.getAbsolutePath() : "",
-										manifestPath != null ? manifestPath.getAbsolutePath() : ""
-									);
+		List<String> args = new LinkedList<String>();
+		args.add("rhizome");
+		args.add("add");
+		args.add("file");
+		if (pin != null) {
+			args.add("--entry-pin");
+			args.add(pin);
+		}
+		args.add(author == null ? "" : author.toHex().toUpperCase());
+		if (payloadPath != null)
+			args.add(payloadPath.getAbsolutePath());
+		else if (manifestPath != null)
+			args.add("");
+		if (manifestPath != null)
+			args.add(manifestPath.getAbsolutePath());
+		ServalDResult result = command(args.toArray(new String[args.size()]));
 		if (result.status != 0 && result.status != 2)
 			throw new ServalDFailureException("exit status indicates failure", result);
 		return new RhizomeAddFileResult(result);
 	}
 
-	public static class RhizomeAddFileResult extends PayloadResult {
-
-		public final String service;
-		public final BundleId manifestId;
-
+	public static class RhizomeAddFileResult extends RhizomeManifestResult {
 		RhizomeAddFileResult(ServalDResult result) throws ServalDInterfaceError {
 			super(result);
-			this.service = getFieldString("service");
-			this.manifestId = getFieldBundleId("manifestid");
 		}
-
 	}
 
-	public interface ManifestResult {
-		public void manifest(Bundle b);
+	public static RhizomeManifestResult rhizomeImportBundle(File payloadFile,
+			File manifestFile) throws ServalDFailureException,
+			ServalDInterfaceError {
+		ServalDResult result = command("rhizome", "import", "bundle",
+				payloadFile.getAbsolutePath(), manifestFile.getAbsolutePath());
+		result.failIfStatusError();
+		RhizomeManifestResult ret = new RhizomeManifestResult(result);
+		return ret;
 	}
 
-	public static synchronized void rhizomeListAsync(String service, SubscriberId sender,
-			SubscriberId recipient, int offset, int limit,
-			final ManifestResult results) {
-		List<String> args = new LinkedList<String>();
-		args.add("rhizome");
-		args.add("list");
-		args.add(""); // list of comma-separated PINs
-		args.add(service == null ? "" : service);
-		args.add(sender == null ? "" : sender.toHex().toUpperCase());
-		args.add(recipient == null ? "" : recipient.toHex().toUpperCase());
-		if (limit >= 0) {
-			if (offset < 0)
-				offset = 0;
-			args.add(Integer.toString(offset));
-			args.add(Integer.toString(limit));
-		} else if (offset >= 0) {
-			args.add(Integer.toString(offset));
-		}
-		rawCommand(new AbstractList<byte[]>() {
-			int state = 0;
-			int columns = 0;
-			int column;
-			String names[];
-
-			Bundle b = new Bundle();
-
-			@Override
-			public boolean add(byte[] value) {
-				try {
-					String str = new String(value);
-					if (log)
-						Log.i(ServalD.TAG, "result = " + str);
-					switch (state) {
-					case 0:
-						columns = Integer.parseInt(str);
-						names = new String[columns];
-						column = 0;
-						state = 1;
-						break;
-					case 1:
-						names[column++] = str;
-						if (column >= columns) {
-							column = 0;
-							state = 2;
-						}
-						break;
-					case 2:
-						b.putString(names[column++], str);
-						if (column >= columns) {
-							column = 0;
-							results.manifest(b);
-							b.clear();
-						}
-						break;
-					}
-					return true;
-				}
-				catch (Exception e) {
-					Log.e(ServalD.TAG, e.getMessage(), e);
-					return false;
-				}
-			}
-
-			@Override
-			public byte[] get(int location) {
-				// TODO Auto-generated method stub
-				return null;
-			}
-
-			@Override
-			public int size() {
-				// TODO Auto-generated method stub
-				return 0;
-			}
-		}, args.toArray(new String[args.size()]));
-	}
-
-	/**
-	 * Return a list of manifests currently in the Rhizome store.
-	 *
-	 * @param service	If non-null, then all found manifests will have the given service type, eg,
-	 * 					"file", "MeshMS"
-	 * @param sender	If non-null, then all found manifests will have the given sender SID
-	 * @param recipient	If non-null, then all found manifests will have the given recipient SID
-	 * @param offset	Ignored if negative, otherwise passed to the SQL SELECT query in the OFFSET
-	 * 					clause.
-	 * @param limit 	Ignored if negative, otherwise passed to the SQL SELECT query in the LIMIT
-	 * 					clause.
-	 * @return			Array of rows, first row contains column labels.  Each row is an array of
-	 * 					strings, all rows have identical array length.
-	 *
-	 * @author Andrew Bettison <andrew@servalproject.com>
-	 */
-	public static RhizomeListResult rhizomeList(String service, SubscriberId sender, SubscriberId recipient, int offset, int limit)
-		throws ServalDFailureException, ServalDInterfaceError
+	public static int rhizomeListRaw(final IJniResults callback, String service, String name, SubscriberId sender, SubscriberId recipient, int offset, int limit)
+			throws ServalDFailureException
 	{
 		List<String> args = new LinkedList<String>();
 		args.add("rhizome");
 		args.add("list");
-		args.add(""); // list of comma-separated PINs
 		args.add(service == null ? "" : service);
+		args.add(name == null ? "" : name);
 		args.add(sender == null ? "" : sender.toHex().toUpperCase());
 		args.add(recipient == null ? "" : recipient.toHex().toUpperCase());
-		if (limit >= 0) {
-			if (offset < 0)
-				offset = 0;
-			args.add(Integer.toString(offset));
-			args.add(Integer.toString(limit));
-		} else if (offset >= 0) {
-			args.add(Integer.toString(offset));
-		}
-		ServalDResult result = command(args.toArray(new String[args.size()]));
-		result.failIfStatusNonzero();
-		return new RhizomeListResult(result);
+		if (offset > 0)
+			args.add("" + offset);
+		else if (limit > 0)
+			args.add("0");
+		if (limit > 0)
+			args.add("" + limit);
+		int ret = command(callback, args.toArray(new String[args.size()]));
+		if (ret == ServalDResult.STATUS_ERROR)
+			throw new ServalDFailureException("error exit status");
+		return ret;
+	}
+
+	public static Cursor rhizomeList(String service, String name, SubscriberId sender, SubscriberId recipient)
+			throws ServalDFailureException, ServalDInterfaceError
+	{
+		return new ServalDCursor(service, name, sender, recipient);
+	}
+
+	public static RhizomeExtractManifestResult rhizomeExtractBundle(
+			BundleId manifestId, File manifestFile, File payloadFile)
+			throws ServalDFailureException, ServalDInterfaceError {
+		ServalDResult r = ServalD.command("rhizome", "extract", "bundle",
+				manifestId.toHex(),
+				manifestFile == null ? "-" : manifestFile.getAbsolutePath(),
+				payloadFile.getAbsolutePath());
+		r.failIfStatusNonzero();
+		RhizomeExtractManifestResult ret = new RhizomeExtractManifestResult(r);
+		if (manifestFile == null && ret.manifest == null)
+			throw new ServalDInterfaceError("missing manifest", ret);
+		return ret;
 	}
 
 	/**
-	 * Extract a manifest into a file at the given path.
-	 *
-	 * @param manifestId	The manifest ID of the manifest to extract.
-	 * @param path 			The path of the file into which the manifest is to be written.
-	 * @return				RhizomeExtractManifestResult
-	 *
+	 * Export a manifest into a file at the given path.
+	 * 
+	 * @param manifestId
+	 *            The manifest ID of the manifest to extract.
+	 * @param path
+	 *            The path of the file into which the manifest is to be written.
+	 * @return RhizomeExtractManifestResult
+	 * 
 	 * @author Andrew Bettison <andrew@servalproject.com>
 	 */
-	public static RhizomeExtractManifestResult rhizomeExtractManifest(BundleId manifestId, File path) throws ServalDFailureException, ServalDInterfaceError
+	public static RhizomeExtractManifestResult rhizomeExportManifest(BundleId manifestId, File path) throws ServalDFailureException, ServalDInterfaceError
 	{
 		List<String> args = new LinkedList<String>();
 		args.add("rhizome");
-		args.add("extract");
+		args.add("export");
 		args.add("manifest");
 		args.add(manifestId.toString());
 		if (path == null)
@@ -512,16 +496,18 @@ public class ServalD
 		return mresult;
 	}
 
-	public static class RhizomeExtractManifestResult extends PayloadResult {
+	public static class RhizomeManifestResult extends PayloadResult {
 		public final String service;
-		public final boolean _readOnly;
-		public final SubscriberId _author;
 		public final RhizomeManifest manifest;
-		RhizomeExtractManifestResult(ServalDResult result) throws ServalDInterfaceError {
+		public final BundleId manifestId;
+		public final long version;
+
+		RhizomeManifestResult(ServalDResult result)
+				throws ServalDInterfaceError {
 			super(result);
+			this.version = getFieldLong("version");
 			this.service = getFieldString("service");
-			this._readOnly = getFieldBoolean(".readonly");
-			this._author = getFieldSubscriberId(".author", null);
+			this.manifestId = getFieldBundleId("manifestid");
 			byte[] manifestBytes = getFieldByteArray("manifest", null);
 			if (manifestBytes != null) {
 				try {
@@ -536,6 +522,19 @@ public class ServalD
 		}
 	}
 
+	public static class RhizomeExtractManifestResult extends
+			RhizomeManifestResult {
+		public final boolean _readOnly;
+		public final SubscriberId _author;
+
+		RhizomeExtractManifestResult(ServalDResult result)
+				throws ServalDInterfaceError {
+			super(result);
+			this._readOnly = getFieldBoolean(".readonly");
+			this._author = getFieldSubscriberId(".author", null);
+		}
+	}
+
 	/**
 	 * Extract a payload file into a file at the given path.
 	 *
@@ -545,11 +544,46 @@ public class ServalD
 	 *
 	 * @author Andrew Bettison <andrew@servalproject.com>
 	 */
-	public static RhizomeExtractFileResult rhizomeExtractFile(FileHash hash, File path) throws ServalDFailureException, ServalDInterfaceError
+	public static RhizomeExtractFileResult rhizomeExtractFile(BundleId bid,
+			File path) throws ServalDFailureException, ServalDInterfaceError
 	{
-		ServalDResult result = command("rhizome", "extract", "file", hash.toHex(), path.getAbsolutePath());
+		ServalDResult result = command("rhizome", "extract", "file",
+				bid.toHex(), path.getAbsolutePath());
 		result.failIfStatusNonzero();
 		return new RhizomeExtractFileResult(result);
+	}
+
+	/**
+	 * Push Rhizome bundles to all configured direct hosts.
+	 *
+	 * @author Andrew Bettison <andrew@servalproject.com>
+	 */
+	public static void rhizomeDirectPush() throws ServalDFailureException, ServalDInterfaceError
+	{
+		ServalDResult result = command("rhizome", "direct", "push");
+		result.failIfStatusNonzero();
+	}
+
+	/**
+	 * Pull Rhizome bundles from all configured direct hosts.
+	 *
+	 * @author Andrew Bettison <andrew@servalproject.com>
+	 */
+	public static void rhizomeDirectPull() throws ServalDFailureException, ServalDInterfaceError
+	{
+		ServalDResult result = command("rhizome", "direct", "pull");
+		result.failIfStatusNonzero();
+	}
+
+	/**
+	 * Sync (push and pull) Rhizome bundles from all configured direct hosts.
+	 *
+	 * @author Andrew Bettison <andrew@servalproject.com>
+	 */
+	public static void rhizomeDirectSync() throws ServalDFailureException, ServalDInterfaceError
+	{
+		ServalDResult result = command("rhizome", "direct", "sync");
+		result.failIfStatusNonzero();
 	}
 
 	// copies the semantics of serval-dna's confParseBoolean
@@ -630,4 +664,17 @@ public class ServalD
 		result.failIfStatusError();
 		return Integer.parseInt(new String(result.outv[0]));
 	}
+
+	public static int peers(final IJniResults callback) throws ServalDInterfaceError
+	{
+		return command(callback, "id", "peers");
+	}
+
+	public static LookupResult reverseLookup(SubscriberId sid) throws ServalDFailureException, ServalDInterfaceError
+	{
+		ServalDResult result = ServalD.command("reverse", "lookup", sid.toHex().toUpperCase());
+		result.failIfStatusError();
+		return new LookupResult(result);
+	}
+
 }

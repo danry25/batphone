@@ -232,12 +232,10 @@ public class RhizomeDetail extends Dialog {
 	protected void onSaveButtonClicked() {
 		try {
 			if (mManifest instanceof RhizomeManifest_File)
-				if (!Rhizome.extractFile(mManifest.getManifestId(), ((RhizomeManifest_File) mManifest).getName()))
-					dismiss();
-		}
-		catch (RhizomeManifest.MissingField e) {
+				Rhizome.extractBundle(mManifest.getManifestId(), ((RhizomeManifest_File) mManifest).getName());
+		} catch (Exception e) {
 			Log.w(Rhizome.TAG, "cannot extract", e);
-			dismiss();
+			ServalBatPhoneApplication.context.displayToastMessage("Failed to save file");
 		}
 		enableSaveOrOpenButton();
 	}
